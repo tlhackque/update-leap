@@ -8,7 +8,7 @@
 # your own risk.  Bugfixes and improvements would be appreciated by the
 # author.
 
-VERSION="1.004"
+VERSION="1.005"
 
 # leap-seconds file manager/updater
 
@@ -277,9 +277,9 @@ function verifySHA {
 
     # Extract the file's hash. Restore any leading zeroes in hash segments.
 
-    # The sed [] includes a tab (\t) and space; #h is followed by a tab and space
-    local FSHA="`echo \"$RAW\" | sed -e'/^#h/!d' -e's/^#h//' -e's/[ 	] */ 0x/g'`"
-    FSHA=`printf '%08x%08x%08x%08x%08x' $FSHA`
+    # The sed [] includes a tab (\t) and space; #h is followed by a tab and space (sometimes space tab)
+    local FSHA="`echo \"$RAW\" | sed -e'/^#h/!d' -e's/^#h//' -e's/[ 	][ 	]*/ 0x/g'`"
+    FSHA="`printf '%08x%08x%08x%08x%08x' $FSHA`"
 
     if [ -n "$FSHA" -a \( "$FSHA" = "$DSHA" \) ]; then
         if [ -n "$2" ]; then
