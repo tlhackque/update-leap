@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright (C) 2014 Timothe Litt litt at acm dot org
+# Copyright (C) 2014 - 2022 Timothe Litt litt at acm dot org
 
 # This script may be freely copied, used and modified providing that
 # this notice and the copyright statement are included in all copies
@@ -8,7 +8,7 @@
 # your own risk.  Bugfixes and improvements would be appreciated by the
 # author.
 
-VERSION="1.005"
+VERSION="1.006"
 
 # leap-seconds file manager/updater
 
@@ -18,7 +18,7 @@ VERSION="1.005"
 # ########## Default configuration ##########
 #
 # Where to get the file
-LEAPSRC="ftp://ftp.nist.gov/pub/time/leap-seconds.list"
+LEAPSRCS="ftp://ftp.nist.gov/pub/time/leap-seconds.list ftp://ftp.boulder.nist.gov/pub/time/leap-seconds.list"
 
 # How many times to try to download new file
 MAXTRIES=6
@@ -30,7 +30,7 @@ NTPCONF=/etc/ntp.conf
 # How long before expiration to get updated file
 PREFETCH="60 days"
 
-# How to restart NTP - older NTP: service ntpd? try-restart | condrestart
+# How to restart NTP - older NTP: service ntpd try-restart | condrestart
 # Recent NTP checks for new file daily, so there's nothing to do
 RESTART=
 
@@ -57,14 +57,12 @@ Usage: $SELF [options] [leapfile]
 Verifies and if necessary, updates leap-second definition file
 
 All arguments are optional:  Default (or current value) shown:
-    -s    Specify the URL of the master copy to download
-          $LEAPSRC
+    -s    Specify the URL(s) of the master copy to download. Space separated list.
+          $LEAPSRCS
     -4    Use only IPv4
     -6    Use only IPv6
     -p 4|6
           Prefer IPv4 or IPv6 (as specified) addresses, but use either
-    -d    Specify the filename on the local system
-          $LEAPFILE
     -e    Specify how long before expiration the file is to be refreshed
           Units are required, e.g. "-e 60 days"  Note that larger values
           imply more frequent refreshes.
@@ -149,7 +147,7 @@ while getopts 46p:P:s:e:f:Fc:r:i:lLt:hqvz:Z opt; do
 	    LOGFAC="$OPTARG"
 	    ;;
         s)
-            LEAPSRC="$OPTARG"
+            LEAPSRCS="$OPTARG"
             ;;
         e)
             PREFETCH="$OPTARG"
@@ -334,98 +332,105 @@ fi
 #  Download a new one
 
 if [ -n "$FORCE" ] || ! verifySHA $LEAPFILE "$VERBOSE" || [ $EXPIRES -lt `date -d "NOW + $PREFETCH" +%s` ] ; then
-    TRY=0
-    while true; do
-        TRY=$(( $TRY + 1 ))
-        if [ -n "$VERBOSE" ]; then
-            log "info" "Attempting download from $LEAPSRC, try $TRY.."
-        fi
-        if wget $PROTO $PREFER -o ${TMPFILE}.log $LEAPSRC -O $TMPFILE ; then
-            log "info" "Download of $LEAPSRC succeeded"
+    for LEAPSRC in $LEAPSRCS; do
+        TRY=0
+        while true; do
+            TRY=$(( $TRY + 1 ))
+            if [ -n "$VERBOSE" ]; then
+                log "info" "Attempting download from $LEAPSRC, try $TRY.."
+            fi
+            if wget $PROTO $PREFER -o ${TMPFILE}.log $LEAPSRC -O $TMPFILE ; then
+                log "info" "Download of $LEAPSRC succeeded"
+                if [ -n "$VERBOSE" ]; then
+                    cat ${TMPFILE}.log
+                fi
+                log "info" "Converting ${TMPFILE} to Unix format"
+                dos2unix -q -k ${TMPFILE} ||
+                if ! verifySHA $TMPFILE "$VERBOSE" ; then
+		    # There is no point in retrying, as the file on the server is almost
+		    # certainly corrupt.
+
+                    log "warning" "Downloaded file $TMPFILE rejected -- saved for diagnosis"
+                    cat ${TMPFILE}.log
+                    rm -f ${TMPFILE}.log
+                    exit 1
+                fi
+                rm -f ${TMPFILE}.log
+
+	        # Set correct permissions on temporary file
+
+                REFFILE="$LEAPFILE"
+                if [ ! -f $LEAPFILE ]; then
+                    log "notice" "$LEAPFILE was missing, creating new copy - check permissions"
+                    touch $LEAPFILE
+		    # Can't copy permissions from old file, copy from NTPCONF instead
+                    REFFILE="$NTPCONF"
+                fi
+                chmod --reference $REFFILE $TMPFILE
+                chown --reference $REFFILE $TMPFILE
+                ( which selinuxenabled && selinuxenabled && which chcon ) >/dev/null 2>&1
+                if  [ $? == 0 ] ; then
+                    chcon --reference $REFFILE $TMPFILE
+                fi
+
+	        # Replace current file with validated new one
+
+                if mv -f $TMPFILE $LEAPFILE ; then
+                    log "notice" "Installed new $LEAPFILE from $LEAPSRC"
+                else
+                    log "error" "Install $TMPFILE => $LEAPFILE failed -- saved for diagnosis"
+                    exit 1
+                fi
+
+	        # Restart NTP (or whatever else is specified)
+
+	        if [ -n "$RESTART" ]; then
+                    if [ -n "$VERBOSE" ]; then
+                        log "info" "Attempting restart action: $RESTART"
+                    fi
+                    R="$( 2>&1 $RESTART )"
+                    if [ $? -eq 0 ]; then
+                        log "notice" "Restart action succeeded"
+                        if [ -n "$VERBOSE" -a -n "$R" ]; then
+                            log "info" "$R"
+                        fi
+                    else
+                        log "error" "Restart action failed"
+                        if [ -n "$R" ]; then
+                            log "error" "$R"
+                        fi
+                        exit 2
+                    fi
+                fi
+                exit 0
+            fi
+
+	    # Failed to download.  See about trying again
+
+            rm -f $TMPFILE
+            if [ $TRY -ge $MAXTRIES ]; then
+                break;
+            fi
             if [ -n "$VERBOSE" ]; then
                 cat ${TMPFILE}.log
+                log "info" "Waiting $INTERVAL minutes before retrying..."
             fi
-            log "info" "Converting ${TMPFILE} to Unix format"
-            dos2unix -q -k ${TMPFILE} ||
-            if ! verifySHA $TMPFILE "$VERBOSE" ; then
-		# There is no point in retrying, as the file on the server is almost
-		# certainly corrupt.
+            sleep $(( $INTERVAL * 60))
+        done
 
-                log "warning" "Downloaded file $TMPFILE rejected -- saved for diagnosis"
-                cat ${TMPFILE}.log
-                rm -f ${TMPFILE}.log
-                exit 1
-            fi
-            rm -f ${TMPFILE}.log
+        # Failed and out of retries
 
-	    # Set correct permissions on temporary file
-
-	    REFFILE="$LEAPFILE"
-            if [ ! -f $LEAPFILE ]; then
-		log "notice" "$LEAPFILE was missing, creating new copy - check permissions"
-                touch $LEAPFILE
-		# Can't copy permissions from old file, copy from NTPCONF instead
-		REFFILE="$NTPCONF"
-            fi
-            chmod --reference $REFFILE $TMPFILE
-            chown --reference $REFFILE $TMPFILE
-	    ( which selinuxenabled && selinuxenabled && which chcon ) >/dev/null 2>&1
-            if  [ $? == 0 ] ; then
-                chcon --reference $REFFILE $TMPFILE
-            fi
-
-	    # Replace current file with validated new one
-
-            if mv -f $TMPFILE $LEAPFILE ; then
-                log "notice" "Installed new $LEAPFILE from $LEAPSRC"
-            else
-                log "error" "Install $TMPFILE => $LEAPFILE failed -- saved for diagnosis"
-                exit 1
-            fi
-
-	    # Restart NTP (or whatever else is specified)
-
-	    if [ -n "$RESTART" ]; then
-		if [ -n "$VERBOSE" ]; then
-		    log "info" "Attempting restart action: $RESTART"
-		fi
-		R="$( 2>&1 $RESTART )"
-		if [ $? -eq 0 ]; then
-		    log "notice" "Restart action succeeded"
-		    if [ -n "$VERBOSE" -a -n "$R" ]; then
-			log "info" "$R"
-		    fi
-		else
-		    log "error" "Restart action failed"
-		    if [ -n "$R" ]; then
-			log "error" "$R"
-		    fi
-		    exit 2
-		fi
-	    fi
-            exit 0
-	fi
-
-	# Failed to download.  See about trying again
-
-        rm -f $TMPFILE
-        if [ $TRY -ge $MAXTRIES ]; then
-            break;
-        fi
-        if [ -n "$VERBOSE" ]; then
+        log "warning" "Download from $LEAPSRC failed after $TRY attempts"
+        if [ -f ${TMPFILE}.log ]; then
             cat ${TMPFILE}.log
-            log "info" "Waiting $INTERVAL minutes before retrying..."
+            rm -f ${TMPFILE}.log $TMPFILE
         fi
-        sleep $(( $INTERVAL * 60))
+
+        # Try next URI
     done
 
-    # Failed and out of retries
+    # Out of URIs
 
-    log "warning" "Download from $LEAPSRC failed after $TRY attempts"
-    if [ -f ${TMPFILE}.log ]; then
-        cat ${TMPFILE}.log
-        rm -f ${TMPFILE}.log $TMPFILE
-    fi
     exit 1
 fi
 log "info" "Not time to replace $LEAPFILE"
