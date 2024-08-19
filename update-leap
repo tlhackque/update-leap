@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright (C) 2014 - 2022 Timothe Litt litt at acm dot org
+# Copyright (C) 2014 - 2024 Timothe Litt litt at acm dot org
 
 # This script may be freely copied, used and modified providing that
 # this notice and the copyright statement are included in all copies
@@ -8,7 +8,7 @@
 # your own risk.  Bugfixes and improvements would be appreciated by the
 # author.
 
-VERSION="1.006"
+VERSION="1.007"
 
 # leap-seconds file manager/updater
 
@@ -18,7 +18,7 @@ VERSION="1.006"
 # ########## Default configuration ##########
 #
 # Where to get the file
-LEAPSRCS="ftp://ftp.nist.gov/pub/time/leap-seconds.list ftp://ftp.boulder.nist.gov/pub/time/leap-seconds.list"
+LEAPSRCS="https://data.iana.org/time-zones/tzdb/leap-seconds.list ftp://ftp.boulder.nist.gov/pub/time/leap-seconds.list ftp://ftp.nist.gov/pub/time/leap-seconds.list"
 
 # How many times to try to download new file
 MAXTRIES=6
